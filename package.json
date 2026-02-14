@@ -1,0 +1,12 @@
+{
+  "name": "gfx-from-scratch",
+  "private": true,
+  "scripts": {
+    "build": "wasm-pack build --target web --out-dir pkg && vite build",
+    "dev": "./watch.sh"
+  },
+  "devDependencies": {
+    "vite": "^7.3.1",
+    "vite-plugin-wasm": "^3.5.0"
+  }
+}
