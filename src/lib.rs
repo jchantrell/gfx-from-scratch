@@ -21,6 +21,14 @@ impl Color {
         format!("rgb({},{},{})", self.r, self.g, self.b)
     }
 
+    fn add(&self, color: Color) -> Color {
+        return Color {
+            r: self.r + color.r,
+            g: self.g + color.g,
+            b: self.b + color.b,
+        };
+    }
+
     fn mul(&self, intensity: f64) -> Color {
         return Color {
             r: (f64::from(self.r) * intensity) as u8,
@@ -118,6 +126,7 @@ struct Sphere {
     radius: f64,
     color: Color,
     specular: f64,
+    reflective: f64,
 }
 impl Sphere {
     fn intersect(&self, o: Vec3, d: Vec3) -> (f64, f64) {
@@ -166,84 +175,133 @@ struct Scene {
 }
 
 impl Scene {
-    fn trace_ray(&self, direction: Vec3) -> Color {
-        let mut closest_t = FAR_CLIPPING_PLANE;
-        let mut closest_sphere: Option<&Sphere> = None;
-
-        for sphere in &self.spheres {
-            let (t1, t2) = sphere.intersect(self.camera.position, direction);
-
-            if t1 >= NEAR_CLIPPING_PLANE && t1 <= FAR_CLIPPING_PLANE && t1 < closest_t {
-                closest_t = t1;
-                closest_sphere = Some(sphere);
-            }
-            if t2 >= NEAR_CLIPPING_PLANE && t2 <= FAR_CLIPPING_PLANE && t2 < closest_t {
-                closest_t = t2;
-                closest_sphere = Some(sphere);
-            }
-        }
+    fn trace_ray(
+        &self,
+        origin: Vec3,
+        destination: Vec3,
+        t_min: f64,
+        t_max: f64,
+        depth: i32,
+    ) -> Color {
+        let (closest_sphere, closest_t) =
+            self.closest_intersection(origin, destination, t_min, t_max);
 
         if closest_sphere.is_none() {
             return BACKGROUND_COLOR;
         }
 
-        let p = self.camera.position.add(direction.mul(closest_t));
+        let p = origin.add(destination.mul(closest_t));
         let n = p.sub(closest_sphere.unwrap().position);
         let nn = n.mul(1.0 / n.len());
 
         let sphere = closest_sphere.unwrap();
-        return sphere.color.mul(self.compute_lighting(
+        let color = sphere.color.mul(self.lighting_intensity(
             p,
             nn,
-            direction.reverse(),
+            destination.reverse(),
             sphere.specular,
         ));
+
+        if depth <= 0 || sphere.reflective <= 0.0 {
+            return color;
+        }
+
+        let rr = self.reflect_ray(destination.reverse(), nn);
+        let rc = self.trace_ray(p, rr, 0.001, FAR_CLIPPING_PLANE, depth - 1);
+
+        return color
+            .mul(1.0 - sphere.reflective)
+            .add(rc.mul(sphere.reflective));
     }
 
-    fn compute_lighting(&self, point: Vec3, normal: Vec3, v: Vec3, specular: f64) -> f64 {
+    fn closest_intersection(
+        &self,
+        origin: Vec3,
+        destination: Vec3,
+        t_min: f64,
+        t_max: f64,
+    ) -> (Option<&Sphere>, f64) {
+        let mut closest_t = t_max;
+        let mut closest_sphere: Option<&Sphere> = None;
+
+        for sphere in &self.spheres {
+            let (t1, t2) = sphere.intersect(origin, destination);
+
+            if t1 >= t_min && t1 <= t_max && t1 < closest_t {
+                closest_t = t1;
+                closest_sphere = Some(sphere);
+            }
+            if t2 >= t_min && t2 <= t_max && t2 < closest_t {
+                closest_t = t2;
+                closest_sphere = Some(sphere);
+            }
+        }
+
+        return (closest_sphere, closest_t);
+    }
+
+    fn reflect_ray(&self, r: Vec3, n: Vec3) -> Vec3 {
+        return n.mul(2.0).mul(n.dot(r)).sub(r);
+    }
+
+    fn lighting_intensity(&self, point: Vec3, normal: Vec3, v: Vec3, specular: f64) -> f64 {
         let mut i: f64 = 0.0;
 
         i += self.light_ambient.intensity;
 
         for light in &self.light_point {
             let l = light.position.sub(point);
-
-            // diffuse
-            let n_dot_l = normal.dot(l);
-            if n_dot_l > 0.0 {
-                i += light.intensity * n_dot_l / (normal.len() * l.len());
-            }
-
-            // specular
-            if specular != -1.0 {
-                let r = normal.mul(2.0).mul(n_dot_l).sub(l);
-                let r_dot_v = r.dot(v);
-                if r_dot_v > 0.0 {
-                    i += light.intensity * (r_dot_v / (r.len() * v.len())).powf(specular);
-                }
-            }
+            self.compute_lighting(point, l, normal, v, light.intensity, specular, 1.0, &mut i);
         }
 
         for light in &self.light_directional {
             let l = light.direction;
-
-            // diffuse
-            let n_dot_l = normal.dot(l);
-            if n_dot_l > 0.0 {
-                i += light.intensity * n_dot_l / (normal.len() * l.len());
-            }
-
-            // specular
-            if specular != -1.0 {
-                let r = normal.mul(2.0).mul(n_dot_l).sub(l);
-                let r_dot_v = r.dot(v);
-                if r_dot_v > 0.0 {
-                    i += light.intensity * (r_dot_v / (r.len() * v.len())).powf(specular);
-                }
-            }
+            self.compute_lighting(
+                point,
+                l,
+                normal,
+                v,
+                light.intensity,
+                specular,
+                FAR_CLIPPING_PLANE,
+                &mut i,
+            );
         }
 
         return i;
+    }
+
+    fn compute_lighting(
+        &self,
+        p: Vec3,
+        l: Vec3,
+        n: Vec3,
+        v: Vec3,
+        intensity: f64,
+        s: f64,
+        t_max: f64,
+        i: &mut f64,
+    ) {
+        // shadows
+        let (shadow_sphere, _shadow_t) = self.closest_intersection(p, l, 0.001, t_max);
+        if shadow_sphere.is_some() {
+            return;
+        }
+
+        // diffuse
+        let n_dot_l = n.dot(l);
+        if n_dot_l > 0.0 {
+            *i += intensity * n_dot_l / (n.len() * l.len());
+        }
+
+        // specular
+        if s != -1.0 {
+            let r = self.reflect_ray(l, n);
+            let r_dot_v = r.dot(v);
+            if r_dot_v > 0.0 {
+                *i += intensity * (r_dot_v / (r.len() * v.len())).powf(s);
+            }
+        }
     }
 }
 
@@ -315,6 +373,7 @@ pub fn main() {
         }],
         spheres: vec![
             Sphere {
+                reflective: 0.2,
                 specular: 500.0,
                 radius: 1.0,
                 position: Vec3 {
@@ -325,6 +384,7 @@ pub fn main() {
                 color: Color { r: 255, g: 0, b: 0 },
             },
             Sphere {
+                reflective: 0.3,
                 specular: 500.0,
                 radius: 1.0,
                 position: Vec3 {
@@ -335,6 +395,7 @@ pub fn main() {
                 color: Color { r: 0, g: 0, b: 255 },
             },
             Sphere {
+                reflective: 0.4,
                 specular: 10.0,
                 radius: 1.0,
                 position: Vec3 {
@@ -345,7 +406,8 @@ pub fn main() {
                 color: Color { r: 0, g: 255, b: 0 },
             },
             Sphere {
-                specular: 1000.0,
+                reflective: 0.5,
+                specular: -1.0,
                 radius: 5000.0,
                 position: Vec3 {
                     x: 0.0,
@@ -364,7 +426,13 @@ pub fn main() {
     for x in -width / 2..width / 2 {
         for y in -height / 2..height / 2 {
             let point = c.to_viewport(x, y);
-            let color = scene.trace_ray(point);
+            let color = scene.trace_ray(
+                scene.camera.position,
+                point,
+                NEAR_CLIPPING_PLANE,
+                FAR_CLIPPING_PLANE,
+                3,
+            );
             c.put_pixel(x, y, color);
         }
     }
