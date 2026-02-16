@@ -2,6 +2,7 @@ use wasm_bindgen::prelude::*;
 use web_sys::console;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement};
 
+const REFLECTION_LIMIT: i32 = 4;
 const FAR_CLIPPING_PLANE: f64 = f64::INFINITY;
 const NEAR_CLIPPING_PLANE: f64 = 1.0;
 const BACKGROUND_COLOR: Color = Color {
@@ -9,6 +10,20 @@ const BACKGROUND_COLOR: Color = Color {
     g: 50,
     b: 50,
 };
+
+struct Mat3 {
+    m: [[f64; 3]; 3],
+}
+
+impl Mat3 {
+    fn mul_vec3(&self, v: Vec3) -> Vec3 {
+        Vec3 {
+            x: self.m[0][0] * v.x + self.m[0][1] * v.y + self.m[0][2] * v.z,
+            y: self.m[1][0] * v.x + self.m[1][1] * v.y + self.m[1][2] * v.z,
+            z: self.m[2][0] * v.x + self.m[2][1] * v.y + self.m[2][2] * v.z,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 struct Color {
@@ -163,7 +178,7 @@ struct LightDirectional {
 
 struct Camera {
     position: Vec3,
-    orientation: f64,
+    orientation: Mat3,
 }
 
 struct Scene {
@@ -350,9 +365,15 @@ pub fn main() {
             position: Vec3 {
                 x: 0.0,
                 y: 0.0,
-                z: 0.0,
+                z: -3.0,
             },
-            orientation: 0.0,
+            orientation: Mat3 {
+                m: [
+                    [f64::cos(0.0), 0.0, f64::sin(0.0)],
+                    [0.0, 1.0, 0.0],
+                    [-f64::sin(0.0), 0.0, f64::cos(0.0)],
+                ],
+            },
         },
         light_ambient: LightAmbient { intensity: 0.2 },
         light_point: vec![LightPoint {
@@ -425,13 +446,13 @@ pub fn main() {
 
     for x in -width / 2..width / 2 {
         for y in -height / 2..height / 2 {
-            let point = c.to_viewport(x, y);
+            let point = scene.camera.orientation.mul_vec3(c.to_viewport(x, y));
             let color = scene.trace_ray(
                 scene.camera.position,
                 point,
                 NEAR_CLIPPING_PLANE,
                 FAR_CLIPPING_PLANE,
-                3,
+                REFLECTION_LIMIT,
             );
             c.put_pixel(x, y, color);
         }
