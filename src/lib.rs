@@ -135,18 +135,29 @@ impl Vec3 {
 struct Sphere {
     position: Vec3,
     radius: f64,
+    radius_squared: f64,
     color: Color,
     specular: f64,
     reflective: f64,
 }
 impl Sphere {
+    fn new(reflective: f64, specular: f64, radius: f64, position: Vec3, color: Color) -> Sphere {
+        Sphere {
+            position,
+            radius,
+            radius_squared: radius * radius,
+            color,
+            specular,
+            reflective,
+        }
+    }
+
     fn intersect(&self, o: Vec3, d: Vec3) -> (f64, f64) {
-        let r = self.radius;
         let co = o.sub(self.position);
 
         let a = d.dot(d);
         let b = 2.0 * d.dot(co);
-        let c = co.dot(co) - r * r;
+        let c = co.dot(co) - self.radius_squared;
 
         let discriminant = b * b - 4.0 * a * c;
         if discriminant < 0.0 {
@@ -385,54 +396,54 @@ pub fn main() {
             },
         }],
         spheres: vec![
-            Sphere {
-                reflective: 0.2,
-                specular: 500.0,
-                radius: 1.0,
-                position: Vec3 {
+            Sphere::new(
+                0.2,
+                500.0,
+                1.0,
+                Vec3 {
                     x: 2.0,
                     y: 0.0,
                     z: 4.0,
                 },
-                color: Color { r: 255, g: 0, b: 0 },
-            },
-            Sphere {
-                reflective: 0.3,
-                specular: 500.0,
-                radius: 1.0,
-                position: Vec3 {
+                Color { r: 255, g: 0, b: 0 },
+            ),
+            Sphere::new(
+                0.3,
+                500.0,
+                1.0,
+                Vec3 {
                     x: 0.0,
                     y: -1.0,
                     z: 3.0,
                 },
-                color: Color { r: 0, g: 0, b: 255 },
-            },
-            Sphere {
-                reflective: 0.4,
-                specular: 10.0,
-                radius: 1.0,
-                position: Vec3 {
+                Color { r: 0, g: 0, b: 255 },
+            ),
+            Sphere::new(
+                0.4,
+                10.0,
+                1.0,
+                Vec3 {
                     x: -2.0,
                     y: 0.0,
                     z: 4.0,
                 },
-                color: Color { r: 0, g: 255, b: 0 },
-            },
-            Sphere {
-                reflective: 0.5,
-                specular: -1.0,
-                radius: 5000.0,
-                position: Vec3 {
+                Color { r: 0, g: 255, b: 0 },
+            ),
+            Sphere::new(
+                0.5,
+                -1.0,
+                5000.0,
+                Vec3 {
                     x: 0.0,
                     y: -5001.0,
                     z: 0.0,
                 },
-                color: Color {
+                Color {
                     r: 255,
                     g: 255,
                     b: 0,
                 },
-            },
+            ),
         ],
     };
 
