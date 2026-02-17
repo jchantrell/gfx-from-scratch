@@ -10,11 +10,36 @@ const BACKGROUND_COLOR: Color = Color {
     g: 50,
     b: 50,
 };
+const VIEWPORT_HEIGHT: i32 = 1;
+const VIEWPORT_WIDTH: i32 = 1;
+
+struct Canvas {
+    ctx: CanvasRenderingContext2d,
+    width: i32,
+    height: i32,
+}
+impl Canvas {
+    fn to_viewport(&self, x: i32, y: i32) -> Vec3 {
+        let vx = x as f64 * VIEWPORT_HEIGHT as f64 / self.width as f64;
+        let vy = y as f64 * VIEWPORT_WIDTH as f64 / self.height as f64;
+        return Vec3 {
+            x: vx,
+            y: vy,
+            z: NEAR_CLIPPING_PLANE,
+        };
+    }
+
+    fn put_pixel(&self, x: i32, y: i32, color: Color) {
+        let sx = self.width / 2 + x;
+        let sy = self.height / 2 - y;
+        self.ctx.set_fill_style_str(&color.serialise());
+        self.ctx.fill_rect(sx as f64, sy as f64, 1.0, 1.0)
+    }
+}
 
 struct Mat3 {
     m: [[f64; 3]; 3],
 }
-
 impl Mat3 {
     fn mul_vec3(&self, v: Vec3) -> Vec3 {
         Vec3 {
@@ -106,35 +131,6 @@ impl Vec3 {
     }
 }
 
-struct Canvas {
-    ctx: CanvasRenderingContext2d,
-
-    width: i32,
-    height: i32,
-
-    vp_width: i32,
-    vp_height: i32,
-}
-
-impl Canvas {
-    fn to_viewport(&self, x: i32, y: i32) -> Vec3 {
-        let vx = x as f64 * self.vp_width as f64 / self.width as f64;
-        let vy = y as f64 * self.vp_height as f64 / self.height as f64;
-        return Vec3 {
-            x: vx,
-            y: vy,
-            z: NEAR_CLIPPING_PLANE,
-        };
-    }
-
-    fn put_pixel(&self, x: i32, y: i32, color: Color) {
-        let sx = self.width / 2 + x;
-        let sy = self.height / 2 - y;
-        self.ctx.set_fill_style_str(&color.serialise());
-        self.ctx.fill_rect(sx as f64, sy as f64, 1.0, 1.0)
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 struct Sphere {
     position: Vec3,
@@ -175,12 +171,10 @@ struct LightDirectional {
     intensity: f64,
     direction: Vec3,
 }
-
 struct Camera {
     position: Vec3,
     orientation: Mat3,
 }
-
 struct Scene {
     camera: Camera,
     spheres: Vec<Sphere>,
@@ -188,7 +182,6 @@ struct Scene {
     light_directional: Vec<LightDirectional>,
     light_point: Vec<LightPoint>,
 }
-
 impl Scene {
     fn trace_ray(
         &self,
@@ -210,12 +203,40 @@ impl Scene {
         let nn = n.mul(1.0 / n.len());
 
         let sphere = closest_sphere.unwrap();
-        let color = sphere.color.mul(self.lighting_intensity(
-            p,
-            nn,
-            destination.reverse(),
-            sphere.specular,
-        ));
+
+        let mut light_intensity: f64 = 0.0;
+
+        light_intensity += self.light_ambient.intensity;
+
+        for light in &self.light_point {
+            let l = light.position.sub(p);
+            self.compute_lighting(
+                p,
+                l,
+                nn,
+                destination.reverse(),
+                light.intensity,
+                sphere.specular,
+                1.0,
+                &mut light_intensity,
+            );
+        }
+
+        for light in &self.light_directional {
+            let l = light.direction;
+            self.compute_lighting(
+                p,
+                l,
+                nn,
+                destination.reverse(),
+                light.intensity,
+                sphere.specular,
+                1.0,
+                &mut light_intensity,
+            );
+        }
+
+        let color = sphere.color.mul(light_intensity);
 
         if depth <= 0 || sphere.reflective <= 0.0 {
             return color;
@@ -259,33 +280,6 @@ impl Scene {
         return n.mul(2.0).mul(n.dot(r)).sub(r);
     }
 
-    fn lighting_intensity(&self, point: Vec3, normal: Vec3, v: Vec3, specular: f64) -> f64 {
-        let mut i: f64 = 0.0;
-
-        i += self.light_ambient.intensity;
-
-        for light in &self.light_point {
-            let l = light.position.sub(point);
-            self.compute_lighting(point, l, normal, v, light.intensity, specular, 1.0, &mut i);
-        }
-
-        for light in &self.light_directional {
-            let l = light.direction;
-            self.compute_lighting(
-                point,
-                l,
-                normal,
-                v,
-                light.intensity,
-                specular,
-                FAR_CLIPPING_PLANE,
-                &mut i,
-            );
-        }
-
-        return i;
-    }
-
     fn compute_lighting(
         &self,
         p: Vec3,
@@ -320,8 +314,7 @@ impl Scene {
     }
 }
 
-#[wasm_bindgen(start)]
-pub fn main() {
+fn create_canvas() -> Canvas {
     let window = web_sys::window().expect("no global window");
     let document = window.document().expect("no document on window");
     let dpr = window.device_pixel_ratio();
@@ -352,13 +345,12 @@ pub fn main() {
 
     ctx.scale(dpr, dpr).unwrap();
 
-    let c = Canvas {
-        ctx,
-        width,
-        height,
-        vp_width: 1,
-        vp_height: 1,
-    };
+    return Canvas { ctx, width, height };
+}
+
+#[wasm_bindgen(start)]
+pub fn main() {
+    let canvas: Canvas = create_canvas();
 
     let scene = Scene {
         camera: Camera {
@@ -444,9 +436,9 @@ pub fn main() {
         ],
     };
 
-    for x in -width / 2..width / 2 {
-        for y in -height / 2..height / 2 {
-            let point = scene.camera.orientation.mul_vec3(c.to_viewport(x, y));
+    for x in -canvas.width / 2..canvas.width / 2 {
+        for y in -canvas.height / 2..canvas.height / 2 {
+            let point = scene.camera.orientation.mul_vec3(canvas.to_viewport(x, y));
             let color = scene.trace_ray(
                 scene.camera.position,
                 point,
@@ -454,7 +446,7 @@ pub fn main() {
                 FAR_CLIPPING_PLANE,
                 REFLECTION_LIMIT,
             );
-            c.put_pixel(x, y, color);
+            canvas.put_pixel(x, y, color);
         }
     }
 }
