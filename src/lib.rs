@@ -30,7 +30,37 @@ struct Canvas {
     half_height: i32,
 }
 impl Canvas {
-    fn new(ctx: CanvasRenderingContext2d, width: i32, height: i32) -> Canvas {
+    fn new() -> Canvas {
+        let window = web_sys::window().expect("no global window");
+        let document = window.document().expect("no document on window");
+        let dpr = window.device_pixel_ratio();
+
+        let canvas = document
+            .create_element("canvas")
+            .unwrap()
+            .dyn_into::<HtmlCanvasElement>()
+            .unwrap();
+
+        document.body().unwrap().append_child(&canvas).unwrap();
+
+        let css_w = canvas.client_width();
+        let css_h = canvas.client_height();
+
+        let width = css_w * dpr as i32;
+        let height = css_h * dpr as i32;
+
+        canvas.set_width(width as u32);
+        canvas.set_height(height as u32);
+
+        let ctx = canvas
+            .get_context("2d")
+            .unwrap()
+            .unwrap()
+            .dyn_into::<CanvasRenderingContext2d>()
+            .unwrap();
+
+        ctx.scale(dpr, dpr).unwrap();
+
         Canvas {
             ctx,
             width,
@@ -393,45 +423,11 @@ impl Scene {
     }
 }
 
-fn create_canvas() -> Canvas {
-    let window = web_sys::window().expect("no global window");
-    let document = window.document().expect("no document on window");
-    let dpr = window.device_pixel_ratio();
-
-    let canvas = document
-        .create_element("canvas")
-        .unwrap()
-        .dyn_into::<HtmlCanvasElement>()
-        .unwrap();
-
-    document.body().unwrap().append_child(&canvas).unwrap();
-
-    let css_w = canvas.client_width();
-    let css_h = canvas.client_height();
-
-    let width = css_w * dpr as i32;
-    let height = css_h * dpr as i32;
-
-    canvas.set_width(width as u32);
-    canvas.set_height(height as u32);
-
-    let ctx = canvas
-        .get_context("2d")
-        .unwrap()
-        .unwrap()
-        .dyn_into::<CanvasRenderingContext2d>()
-        .unwrap();
-
-    ctx.scale(dpr, dpr).unwrap();
-
-    return Canvas::new(ctx, width, height);
-}
-
 #[wasm_bindgen(start)]
 pub fn main() {
     let window = web_sys::window().unwrap();
     let perf = window.performance().expect("performance API unavailable");
-    let canvas = Rc::new(create_canvas());
+    let canvas = Rc::new(Canvas::new());
 
     let scene = Rc::new(RefCell::new(Scene {
         camera: Camera {
