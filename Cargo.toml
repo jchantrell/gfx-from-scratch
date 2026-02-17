@@ -17,5 +17,7 @@ features = [
     "HtmlCanvasElement",
     "CanvasRenderingContext2d",
     "Element",
-    "console"
+    "console",
+    "KeyboardEvent",
+    "Performance",
 ]

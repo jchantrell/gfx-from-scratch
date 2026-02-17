@@ -1,6 +1,10 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
-use web_sys::console;
-use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement};
+use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, console};
+mod input;
 
 const REFLECTION_LIMIT: i32 = 4;
 const FAR_CLIPPING_PLANE: f64 = f64::INFINITY;
@@ -41,6 +45,14 @@ struct Mat3 {
     m: [[f64; 3]; 3],
 }
 impl Mat3 {
+    fn rotation_y(angle: f64) -> Mat3 {
+        let c = angle.cos();
+        let s = angle.sin();
+        Mat3 {
+            m: [[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]],
+        }
+    }
+
     fn mul_vec3(&self, v: Vec3) -> Vec3 {
         Vec3 {
             x: self.m[0][0] * v.x + self.m[0][1] * v.y + self.m[0][2] * v.z,
@@ -185,15 +197,32 @@ struct LightDirectional {
 struct Camera {
     position: Vec3,
     orientation: Mat3,
+    rotation_y: f64,
+}
+impl Camera {
+    fn rotate(&mut self, delta: f64) {
+        self.rotation_y += delta;
+        self.orientation = Mat3::rotation_y(self.rotation_y);
+    }
 }
 struct Scene {
     camera: Camera,
+    input: input::Input,
     spheres: Vec<Sphere>,
     light_ambient: LightAmbient,
     light_directional: Vec<LightDirectional>,
     light_point: Vec<LightPoint>,
 }
 impl Scene {
+    fn update(&mut self) {
+        if self.input.is_key_down("ArrowLeft") {
+            self.camera.rotate(-ROTATION_SPEED);
+        }
+        if self.input.is_key_down("ArrowRight") {
+            self.camera.rotate(ROTATION_SPEED);
+        }
+    }
+
     fn trace_ray(
         &self,
         origin: Vec3,
@@ -359,25 +388,41 @@ fn create_canvas() -> Canvas {
     return Canvas { ctx, width, height };
 }
 
+fn render(canvas: &Canvas, scene: &Scene) {
+    for x in -canvas.width / 2..canvas.width / 2 {
+        for y in -canvas.height / 2..canvas.height / 2 {
+            let point = scene.camera.orientation.mul_vec3(canvas.to_viewport(x, y));
+            let color = scene.trace_ray(
+                scene.camera.position,
+                point,
+                NEAR_CLIPPING_PLANE,
+                FAR_CLIPPING_PLANE,
+                REFLECTION_LIMIT,
+            );
+            canvas.put_pixel(x, y, color);
+        }
+    }
+}
+
+const ROTATION_SPEED: f64 = 0.05;
+
 #[wasm_bindgen(start)]
 pub fn main() {
-    let canvas: Canvas = create_canvas();
+    let window = web_sys::window().unwrap();
+    let perf = window.performance().expect("performance API unavailable");
+    let canvas = Rc::new(create_canvas());
 
-    let scene = Scene {
+    let scene = Rc::new(RefCell::new(Scene {
         camera: Camera {
             position: Vec3 {
                 x: 0.0,
                 y: 0.0,
                 z: -3.0,
             },
-            orientation: Mat3 {
-                m: [
-                    [f64::cos(0.0), 0.0, f64::sin(0.0)],
-                    [0.0, 1.0, 0.0],
-                    [-f64::sin(0.0), 0.0, f64::cos(0.0)],
-                ],
-            },
+            rotation_y: 0.0,
+            orientation: Mat3::rotation_y(0.0),
         },
+        input: input::Input::new(),
         light_ambient: LightAmbient { intensity: 0.2 },
         light_point: vec![LightPoint {
             intensity: 0.6,
@@ -445,19 +490,38 @@ pub fn main() {
                 },
             ),
         ],
-    };
+    }));
 
-    for x in -canvas.width / 2..canvas.width / 2 {
-        for y in -canvas.height / 2..canvas.height / 2 {
-            let point = scene.camera.orientation.mul_vec3(canvas.to_viewport(x, y));
-            let color = scene.trace_ray(
-                scene.camera.position,
-                point,
-                NEAR_CLIPPING_PLANE,
-                FAR_CLIPPING_PLANE,
-                REFLECTION_LIMIT,
-            );
-            canvas.put_pixel(x, y, color);
+    let last_time = Rc::new(RefCell::new(perf.now()));
+    let cb: Rc<RefCell<Option<Closure<dyn FnMut()>>>> = Rc::new(RefCell::new(None));
+    let cb_clone = Rc::clone(&cb);
+
+    *cb.borrow_mut() = Some(Closure::new({
+        let scene = Rc::clone(&scene);
+        let canvas = Rc::clone(&canvas);
+        let last_time = Rc::clone(&last_time);
+
+        move || {
+            let now = perf.now();
+            let dt = now - *last_time.borrow();
+            *last_time.borrow_mut() = now;
+
+            let fps = if dt > 0.0 { 1000.0 / dt } else { 0.0 };
+            console::log_1(&format!("frame {:.2} ms | {:.1} fps", dt, fps).into());
+
+            scene.borrow_mut().update();
+            render(&canvas, &scene.borrow());
+
+            window
+                .request_animation_frame(
+                    cb_clone.borrow().as_ref().unwrap().as_ref().unchecked_ref(),
+                )
+                .unwrap();
         }
-    }
+    }));
+
+    web_sys::window()
+        .unwrap()
+        .request_animation_frame(cb.borrow().as_ref().unwrap().as_ref().unchecked_ref())
+        .unwrap();
 }
