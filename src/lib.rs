@@ -16,6 +16,7 @@ const BACKGROUND_COLOR: Color = Color {
 };
 const VIEWPORT_HEIGHT: i32 = 1;
 const VIEWPORT_WIDTH: i32 = 1;
+const ROTATION_SPEED: f64 = 0.05;
 
 struct Canvas {
     ctx: CanvasRenderingContext2d,
@@ -235,6 +236,22 @@ struct Scene {
     light_point: Vec<LightPoint>,
 }
 impl Scene {
+    fn render(&self, canvas: &Canvas) {
+        for x in -canvas.half_width..canvas.half_width {
+            for y in -canvas.half_height..canvas.half_height {
+                let point = self.camera.orientation.mul_vec3(canvas.to_viewport(x, y));
+                let color = self.trace_ray(
+                    self.camera.position,
+                    point,
+                    NEAR_CLIPPING_PLANE,
+                    FAR_CLIPPING_PLANE,
+                    REFLECTION_LIMIT,
+                );
+                canvas.put_pixel(x, y, color);
+            }
+        }
+    }
+
     fn update(&mut self) {
         if self.input.is_key_down("ArrowLeft") {
             self.camera.rotate(-ROTATION_SPEED);
@@ -410,24 +427,6 @@ fn create_canvas() -> Canvas {
     return Canvas::new(ctx, width, height);
 }
 
-fn render(canvas: &Canvas, scene: &Scene) {
-    for x in -canvas.half_width..canvas.half_width {
-        for y in -canvas.half_height..canvas.half_height {
-            let point = scene.camera.orientation.mul_vec3(canvas.to_viewport(x, y));
-            let color = scene.trace_ray(
-                scene.camera.position,
-                point,
-                NEAR_CLIPPING_PLANE,
-                FAR_CLIPPING_PLANE,
-                REFLECTION_LIMIT,
-            );
-            canvas.put_pixel(x, y, color);
-        }
-    }
-}
-
-const ROTATION_SPEED: f64 = 0.05;
-
 #[wasm_bindgen(start)]
 pub fn main() {
     let window = web_sys::window().unwrap();
@@ -531,8 +530,9 @@ pub fn main() {
             let fps = if dt > 0.0 { 1000.0 / dt } else { 0.0 };
             console::log_1(&format!("frame {:.2} ms | {:.1} fps", dt, fps).into());
 
-            scene.borrow_mut().update();
-            render(&canvas, &scene.borrow());
+            let mut s = scene.borrow_mut();
+            s.update();
+            s.render(&canvas);
 
             window
                 .request_animation_frame(
