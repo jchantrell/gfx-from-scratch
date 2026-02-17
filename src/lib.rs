@@ -21,11 +21,29 @@ struct Canvas {
     ctx: CanvasRenderingContext2d,
     width: i32,
     height: i32,
+
+    vw_ratio: f64,
+    vh_ratio: f64,
+
+    half_width: i32,
+    half_height: i32,
 }
 impl Canvas {
+    fn new(ctx: CanvasRenderingContext2d, width: i32, height: i32) -> Canvas {
+        Canvas {
+            ctx,
+            width,
+            height,
+            vw_ratio: VIEWPORT_WIDTH as f64 / height as f64,
+            vh_ratio: VIEWPORT_HEIGHT as f64 / width as f64,
+            half_width: width / 2,
+            half_height: height / 2,
+        }
+    }
+
     fn to_viewport(&self, x: i32, y: i32) -> Vec3 {
-        let vx = x as f64 * VIEWPORT_HEIGHT as f64 / self.width as f64;
-        let vy = y as f64 * VIEWPORT_WIDTH as f64 / self.height as f64;
+        let vx = x as f64 * self.vh_ratio;
+        let vy = y as f64 * self.vw_ratio;
         return Vec3 {
             x: vx,
             y: vy,
@@ -34,8 +52,8 @@ impl Canvas {
     }
 
     fn put_pixel(&self, x: i32, y: i32, color: Color) {
-        let sx = self.width / 2 + x;
-        let sy = self.height / 2 - y;
+        let sx = self.half_width + x;
+        let sy = self.half_height - y;
         self.ctx.set_fill_style_str(&color.serialise());
         self.ctx.fill_rect(sx as f64, sy as f64, 1.0, 1.0)
     }
@@ -176,8 +194,11 @@ impl Sphere {
             return (FAR_CLIPPING_PLANE, FAR_CLIPPING_PLANE);
         }
 
-        let t1 = (-b + discriminant.sqrt()) / (2.0 * a);
-        let t2 = (-b - discriminant.sqrt()) / (2.0 * a);
+        let a_by_2 = 2.0 * a;
+        let d_sqrt = discriminant.sqrt();
+
+        let t1 = (-b + d_sqrt) / a_by_2;
+        let t2 = (-b - d_sqrt) / a_by_2;
 
         return (t1, t2);
     }
@@ -241,6 +262,7 @@ impl Scene {
         let p = origin.add(destination.mul(closest_t));
         let n = p.sub(closest_sphere.unwrap().position);
         let nn = n.mul(1.0 / n.len());
+        let reverse_destination = destination.reverse();
 
         let sphere = closest_sphere.unwrap();
 
@@ -254,7 +276,7 @@ impl Scene {
                 p,
                 l,
                 nn,
-                destination.reverse(),
+                reverse_destination,
                 light.intensity,
                 sphere.specular,
                 1.0,
@@ -268,7 +290,7 @@ impl Scene {
                 p,
                 l,
                 nn,
-                destination.reverse(),
+                reverse_destination,
                 light.intensity,
                 sphere.specular,
                 1.0,
@@ -282,7 +304,7 @@ impl Scene {
             return color;
         }
 
-        let rr = self.reflect_ray(destination.reverse(), nn);
+        let rr = self.reflect_ray(reverse_destination, nn);
         let rc = self.trace_ray(p, rr, 0.001, FAR_CLIPPING_PLANE, depth - 1);
 
         return color
@@ -385,12 +407,12 @@ fn create_canvas() -> Canvas {
 
     ctx.scale(dpr, dpr).unwrap();
 
-    return Canvas { ctx, width, height };
+    return Canvas::new(ctx, width, height);
 }
 
 fn render(canvas: &Canvas, scene: &Scene) {
-    for x in -canvas.width / 2..canvas.width / 2 {
-        for y in -canvas.height / 2..canvas.height / 2 {
+    for x in -canvas.half_width..canvas.half_width {
+        for y in -canvas.half_height..canvas.half_height {
             let point = scene.camera.orientation.mul_vec3(canvas.to_viewport(x, y));
             let color = scene.trace_ray(
                 scene.camera.position,
